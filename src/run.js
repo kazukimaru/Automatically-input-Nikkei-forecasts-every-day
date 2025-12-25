@@ -1,224 +1,165 @@
 // src/run.js
 import { chromium } from "playwright";
 
+// ====== 設定（GitHub Secrets から読む） ======
 const LOGIN_URL = "https://shi2026.market-price-forecast.com/login.php";
-const TOP_URL = "https://shi2026.market-price-forecast.com/"; // TOPリンク押下後の遷移先が不明でもここ起点でOK
+const EMAIL = process.env.FORECAST_EMAIL;
+const PASSWORD = process.env.FORECAST_PASSWORD;
 
-function mustEnv(name) {
-  const v = process.env[name];
-  if (!v) throw new Error(`ENV ${name} is missing (GitHub Secretsに設定してね)`);
-  return v;
+// 先物データ（いまログでNIY=F取れてるやつを使う想定）
+const FUTURES_SYMBOL = process.env.FUTURES_SYMBOL || "NIY=F"; // 日経先物の例
+const YAHOO_CHART_URL = (symbol) =>
+  `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=5d&interval=1d`;
+
+// Slack通知（Incoming Webhook）
+const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL;
+
+// ====== ユーティリティ ======
+async function slackNotify(text) {
+  if (!SLACK_WEBHOOK_URL) return;
+  try {
+    await fetch(SLACK_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+  } catch (e) {
+    // Slack失敗は致命傷にしない
+    console.log("WARN: Slack notify failed:", e?.message || e);
+  }
 }
 
-// Yahoo Finance から先物っぽい値を取る（今は NIY=F を使用）
-// 例: https://query1.finance.yahoo.com/v8/finance/chart/NIY=F?range=5d&interval=1d
-async function fetchYahooLatestClose(symbol = "NIY=F") {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
-    symbol
-  )}?range=5d&interval=1d`;
-
+async function fetchYahooLatestClose(symbol) {
   console.log(`INFO: fetching Yahoo chart... symbol=${symbol}`);
-  const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
-  if (!res.ok) throw new Error(`Yahoo fetch failed: ${res.status} ${res.statusText}`);
+  const res = await fetch(YAHOO_CHART_URL(symbol), {
+    headers: {
+      // GitHub Actions上で弾かれることがあるので軽く偽装（超重要）
+      "user-agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
+      accept: "application/json,text/plain,*/*",
+    },
+  });
+
+  if (!res.ok) {
+    throw new Error(`Yahoo chart fetch failed: HTTP ${res.status}`);
+  }
 
   const data = await res.json();
 
   const result = data?.chart?.result?.[0];
-  const closes = result?.indicators?.quote?.[0]?.close;
+  const close = result?.indicators?.quote?.[0]?.close;
   const timestamps = result?.timestamp;
 
-  if (!Array.isArray(closes) || closes.length === 0) {
-    throw new Error("Yahoo: close array missing (取得できてない)");
+  if (!Array.isArray(close) || close.length === 0) {
+    throw new Error("CSVの行数が足りない（データが取得できてない可能性）");
   }
 
-  // 末尾が null のことがあるので、最後の非nullを拾う
-  let idx = closes.length - 1;
-  while (idx >= 0 && (closes[idx] === null || closes[idx] === undefined)) idx--;
-
-  if (idx < 0) throw new Error("Yahoo: all close values are null");
-
-  const latestClose = closes[idx];
-  const ts = timestamps?.[idx] ? new Date(timestamps[idx] * 1000).toISOString() : "unknown";
-
-  return { latestClose, timeISO: ts };
-}
-
-function toYenSen(value) {
-  // value が 50455.12 みたいな想定
-  const yen = Math.floor(value);
-  const sen = Math.round((value - yen) * 100); // 0〜99
-  return { yen, sen };
-}
-
-async function firstVisibleLocator(page, selectors) {
-  for (const sel of selectors) {
-    const loc = page.locator(sel);
-    try {
-      const count = await loc.count();
-      if (count > 0) {
-        // 表示待ち（すぐ例外なら次へ）
-        await loc.first().waitFor({ state: "visible", timeout: 3000 });
-        return loc.first();
-      }
-    } catch (_) {
-      // 次の候補へ
+  // closeの最後はnullのときがあるので、後ろから有効値を探す
+  let latestClose = null;
+  let latestTime = null;
+  for (let i = close.length - 1; i >= 0; i--) {
+    if (Number.isFinite(close[i])) {
+      latestClose = close[i];
+      latestTime = timestamps?.[i] ? new Date(timestamps[i] * 1000) : null;
+      break;
     }
   }
-  return null;
+
+  if (!Number.isFinite(latestClose)) {
+    throw new Error("latestClose が取れなかった（closeが全部nullの可能性）");
+  }
+
+  console.log(`OK: ${symbol} latestClose=${latestClose} time=${latestTime?.toISOString()}`);
+  return { latestClose, latestTime };
 }
 
-async function confirmOnLoginPage(page) {
-  const title = await page.title().catch(() => "");
-  const url = page.url();
-  console.log(`INFO: page title="${title}" url=${url}`);
-}
-
-async function dumpDebug(page) {
-  const url = page.url();
-  const title = await page.title().catch(() => "");
-  console.log(`DEBUG: url=${url}`);
-  console.log(`DEBUG: title=${title}`);
-
-  // スクショ & HTML保存（Actionsでartifactにできる）
-  await page.screenshot({ path: "debug.png", fullPage: true });
-  const html = await page.content();
-  await BunWrite("debug.html", html);
-}
-
-// Node標準でファイル保存（Bunなし）
-async function BunWrite(path, text) {
-  const fs = await import("node:fs/promises");
-  await fs.writeFile(path, text, "utf-8");
+// 予想値 → 円/銭に分割（例：50455.12 → 50455円 12銭）
+function toYenSen(value) {
+  const rounded = Math.round(value * 100) / 100; // 小数2桁
+  const yen = Math.floor(rounded);
+  const sen = Math.round((rounded - yen) * 100);
+  return { yen: String(yen), sen: String(sen).padStart(2, "0") };
 }
 
 async function main() {
-  const email = mustEnv("FORECAST_EMAIL");
-  const password = mustEnv("FORECAST_PASSWORD");
+  if (!EMAIL || !PASSWORD) {
+    throw new Error("FORECAST_EMAIL / FORECAST_PASSWORD が未設定（GitHub Secretsを確認）");
+  }
 
-  // 先物の取得（今は NIY=F）
-  console.log("📈 先物取得中...");
-  const { latestClose, timeISO } = await fetchYahooLatestClose("NIY=F");
-  const { yen, sen } = toYenSen(latestClose);
+  // 1) 先物取得
+  const { latestClose } = await fetchYahooLatestClose(FUTURES_SYMBOL);
 
-  console.log(`取得値: ${latestClose} → ${yen}円 ${sen}銭  time=${timeISO}`);
+  // ここはあなたのルールで調整OK
+  // 「先物の終値をそのまま入れる」例（小数なしにしたければ Math.round を使う）
+  const target = latestClose;
+  const { yen, sen } = toYenSen(target);
 
-  // ブラウザ起動
+  console.log(`📈 先物取得中...`);
+  console.log(`取得値: ${target} → ${yen}円 ${sen}銭`);
+
+  // 2) ブラウザで入力
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({
-    userAgent:
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome Safari/537.36",
-  });
-  const page = await context.newPage();
-
-  // タイムアウト長め
-  page.setDefaultTimeout(60000);
+  const page = await browser.newPage();
 
   try {
-    console.log(`INFO: goto ${LOGIN_URL}`);
-    const resp = await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" });
+    // 失敗時のデバッグ用
+    page.setDefaultTimeout(60_000);
 
-    const status = resp?.status();
-    console.log(`INFO: login status=${status}`);
-    await confirmOnLoginPage(page);
+    // ログインページ
+    await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" });
 
-    // 「メール」「パスワード」欄を複数候補で探す
-    const mailInput = await firstVisibleLocator(page, [
-      'input[name="mail"]',
-      'input#mail',
-      'input[type="email"]',
-      'input[name="email"]',
-      'input[type="text"]', // 最後の保険（ログイン画面の最初の入力欄がメールなら拾える）
-    ]);
+    // あなたが教えてくれた正しいセレクタ
+    await page.locator("#accountid").fill(EMAIL);
+    await page.locator("#password").fill(PASSWORD);
 
-    const passInput = await firstVisibleLocator(page, [
-      'input[name="pass"]',
-      'input#pass',
-      'input[type="password"]',
-      'input[name="password"]',
-    ]);
-
-    if (!mailInput || !passInput) {
-      console.log("ERROR: ログイン画面の入力欄が見つからない");
-      await dumpDebug(page);
-      throw new Error("Login inputs not found. debug.png / debug.html を見て原因特定してね");
-    }
-
-    await mailInput.fill(email);
-    await passInput.fill(password);
-
-    // ログインボタンも複数候補
-    const loginBtn =
-      (await firstVisibleLocator(page, [
-        'input[type="submit"]',
-        'button[type="submit"]',
-        'input[value*="ログイン"]',
-        'button:has-text("ログイン")',
-      ])) ?? page.locator("text=ログイン").first();
-
-    console.log("INFO: click login");
+    // ログイン押下→遷移待ち
     await Promise.all([
-      page.waitForLoadState("domcontentloaded"),
-      loginBtn.click({ timeout: 30000 }),
+      page.waitForNavigation({ waitUntil: "domcontentloaded" }),
+      page.locator("#login").click(),
     ]);
 
-    console.log("INFO: logged in maybe. current url=", page.url());
-
-    // TOPへ（画面左上の TOP リンク押下想定）
-    const topLink = await firstVisibleLocator(page, [
-      'a:has-text("TOP")',
-      'a:has-text("トップ")',
-      "text=TOP",
+    // 3) TOPへ（ログイン後ホームに TOPリンクがある）
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: "domcontentloaded" }),
+      page.getByRole("link", { name: "TOP" }).click(),
     ]);
-    if (topLink) {
-      await Promise.all([page.waitForLoadState("domcontentloaded"), topLink.click()]);
-    } else {
-      // ない場合はTOP_URLへ直アクセス
-      await page.goto(TOP_URL, { waitUntil: "domcontentloaded" });
-    }
 
-    // 円と銭の入力欄（ここも複数候補）
-    // 画面構造が不明でも、最初の2つのテキスト入力欄を拾う保険を入れる
-    const inputs = page.locator('input[type="text"], input[type="number"]');
-    const count = await inputs.count();
-    if (count < 2) {
-      console.log("ERROR: 円/銭入力欄が見つからない");
-      await dumpDebug(page);
-      throw new Error("Yen/Sen inputs not found. debug.png / debug.html を確認してね");
-    }
-
-    // 1つ目：円 2つ目：銭 の想定で入れる
-    await inputs.nth(0).fill(String(yen));
-    await inputs.nth(1).fill(String(sen));
+    // 4) 投票ページで入力（classで拾う）
+    // 円: input.yen, 銭: input.sen
+    await page.locator("input.yen").fill(yen);
+    await page.locator("input.sen").fill(sen);
 
     // 投票ボタン
-    const voteBtn = await firstVisibleLocator(page, [
-      'input[type="submit"]',
-      'button[type="submit"]',
-      'input[value*="投票"]',
-      'button:has-text("投票")',
-      "text=投票",
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: "domcontentloaded" }).catch(() => null),
+      page.locator('input.submit[value="投票"]').click(),
     ]);
 
-    if (!voteBtn) {
-      console.log("ERROR: 投票ボタンが見つからない");
-      await dumpDebug(page);
-      throw new Error("Vote button not found. debug.png / debug.html を確認してね");
+    // 成功っぽい判定（ページに「投票済」や「ステータス」が出るならここを強化）
+    const content = await page.content();
+    const ok = content.includes("投票") || content.includes("ステータス");
+
+    if (!ok) {
+      throw new Error("投票完了の判定ができなかった（画面文言が想定と違う可能性）");
     }
 
-    console.log("INFO: click vote");
-    await Promise.all([page.waitForLoadState("domcontentloaded"), voteBtn.click()]);
-
-    console.log(`✅ VOTED: ${yen}円 ${sen}銭 (from ${latestClose})`);
-    console.log(`OK: NIY=F latestClose=${latestClose} time=${timeISO}`);
-
-    await browser.close();
-    return;
+    console.log("✅ 投票処理: たぶん成功");
+    await slackNotify(`✅ 日経平均フォーキャスト投票 成功\n${yen}円${sen}銭（元データ: ${FUTURES_SYMBOL}）`);
   } catch (e) {
+    // デバッグ用スクショ（ActionsのArtifactsに上げる）
+    try {
+      await page.screenshot({ path: "debug.png", fullPage: true });
+    } catch {}
+
     console.log("❌ ERROR:", e?.message || e);
-    // ここでdebug.png/debug.htmlができてればActions artifactで回収できる
+    await slackNotify(`❌ 日経平均フォーキャスト投票 失敗\n原因: ${e?.message || e}`);
+    throw e;
+  } finally {
     await browser.close();
-    process.exit(1);
   }
 }
 
-main();
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
