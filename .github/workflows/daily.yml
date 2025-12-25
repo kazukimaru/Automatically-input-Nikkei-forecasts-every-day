@@ -20,7 +20,6 @@ jobs:
         with:
           node-version: "20"
 
-      # npm ci は package-lock.json が必須なので、まずは npm install にする
       - name: Install deps
         run: npm install
 
@@ -33,7 +32,6 @@ jobs:
           LOGIN_PASSWORD: ${{ secrets.LOGIN_PASSWORD }}
         run: npm start
 
-      # 失敗したときだけ、debug.png/debug.html をアップロード
       - name: Upload debug artifacts (on failure)
         if: failure()
         uses: actions/upload-artifact@v4
@@ -43,24 +41,22 @@ jobs:
             debug.png
             debug.html
 
-      # Slack通知（成功）
       - name: Notify Slack (success)
         if: success()
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           curl -X POST -H 'Content-type: application/json' \
             --data "{\"text\":\"✅ Nikkei forecast bot: SUCCESS\\n${RUN_URL}\"}" \
             "$SLACK_WEBHOOK_URL"
 
-      # Slack通知（失敗）
       - name: Notify Slack (failure)
         if: failure()
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           curl -X POST -H 'Content-type: application/json' \
             --data "{\"text\":\"❌ Nikkei forecast bot: FAILED\\n${RUN_URL}\\n(Artifactsに debug.png / debug.html)\"}" \
             "$SLACK_WEBHOOK_URL"
