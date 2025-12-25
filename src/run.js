@@ -77,8 +77,8 @@ async function saveDebug(page, label) {
 }
 
 async function main() {
-  const EMAIL = process.env.FORECAST_EMAIL;
-  const PASSWORD = process.env.FORECAST_PASSWORD;
+  const EMAIL = process.env.LOGIN_EMAIL;
+  const PASSWORD = process.env.LOGIN_PASSWORD;
 
   if (!EMAIL || !PASSWORD) {
     throw new Error("Missing secrets: FORECAST_EMAIL / FORECAST_PASSWORD");
