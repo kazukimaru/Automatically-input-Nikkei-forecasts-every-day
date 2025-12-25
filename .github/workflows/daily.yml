@@ -20,6 +20,7 @@ jobs:
         with:
           node-version: "20"
 
+      # npm ci は package-lock.json が必須なので、まずは npm install にする
       - name: Install deps
         run: npm install
 
@@ -48,8 +49,9 @@ jobs:
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           curl -X POST -H 'Content-type: application/json' \
-            --data '{"text":"✅ Nikkei forecast bot: SUCCESS"}' \
+            --data "{\"text\":\"✅ Nikkei forecast bot: SUCCESS\\n${RUN_URL}\"}" \
             "$SLACK_WEBHOOK_URL"
 
       # Slack通知（失敗）
@@ -58,6 +60,7 @@ jobs:
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           curl -X POST -H 'Content-type: application/json' \
-            --data '{"text":"❌ Nikkei forecast bot: FAILED（ActionsのArtifactsに debug.png / debug.html あります）"}' \
+            --data "{\"text\":\"❌ Nikkei forecast bot: FAILED\\n${RUN_URL}\\n(Artifactsに debug.png / debug.html)\"}" \
             "$SLACK_WEBHOOK_URL"
