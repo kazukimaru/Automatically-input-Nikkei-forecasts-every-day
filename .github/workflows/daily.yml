@@ -1,17 +1,24 @@
-name: Test Auto Run
+name: Nikkei Auto Forecast
 
 on:
-  schedule:
-    - cron: "0 22 * * *"  # 日本時間7:00
   workflow_dispatch:
+  schedule:
+    - cron: "0 22 * * 1-5" # 平日7:00 JST
 
 jobs:
   run:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+
       - run: npm install
+      - run: npx playwright install chromium
+
       - run: npm start
+        env:
+          LOGIN_EMAIL: ${{ secrets.LOGIN_EMAIL }}
+          LOGIN_PASSWORD: ${{ secrets.LOGIN_PASSWORD }}
