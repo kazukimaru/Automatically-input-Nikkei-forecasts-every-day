@@ -1,89 +1,84 @@
-// src/run.js
-// 目的：日経先物（Yahoo Finance: NIY=F）の最新値っぽいものを取得して表示する
-// まずは「取得できる」ことを最優先。フォーム入力（Playwright）は次段階。
+import { chromium } from "playwright";
 
-const SYMBOL = process.env.SYMBOL || "NIY=F"; // 先物。必要なら NKD=F に変えてもOK
-const RANGE = process.env.RANGE || "1d";
-const INTERVAL = process.env.INTERVAL || "1m";
+/* ==========
+   設定
+========== */
+const LOGIN_URL = "https://shi2026.market-price-forecast.com/login.php";
+const SYMBOL = "NIY=F";
 
-async function fetchYahooChart(symbol) {
-  const url =
-    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}` +
-    `?range=${encodeURIComponent(RANGE)}&interval=${encodeURIComponent(INTERVAL)}`;
+/* ==========
+   Yahooから先物取得
+========== */
+async function fetchFuturePrice() {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${SYMBOL}?range=1d&interval=1m`;
 
   const res = await fetch(url, {
     headers: {
-      // 念のため UA を付ける（ブロック回避というより “普通のブラウザっぽさ”）
       "User-Agent": "Mozilla/5.0",
-      "Accept": "application/json,text/plain,*/*",
-    },
+      "Accept": "application/json"
+    }
   });
 
-  const text = await res.text();
-
-  // 失敗時に原因が追えるように、ステータスと先頭をログ
-  if (!res.ok) {
-    throw new Error(`Yahoo chart HTTP ${res.status}: ${text.slice(0, 200)}`);
-  }
-
-  let data;
-  try {
-    data = JSON.parse(text);
-  } catch (e) {
-    throw new Error(`JSON parse failed: ${text.slice(0, 200)}`);
-  }
-
-  // chart の中身を安全にチェック
+  const data = await res.json();
   const result = data?.chart?.result?.[0];
-  const error = data?.chart?.error;
-
-  if (error) {
-    throw new Error(`Yahoo chart error: ${JSON.stringify(error)}`);
-  }
-  if (!result) {
-    throw new Error(`Yahoo chart result is empty: ${text.slice(0, 200)}`);
-  }
-
-  // 「最新の終値(close)」っぽいものを拾う（nullが混ざるので後ろから探す）
   const closes = result?.indicators?.quote?.[0]?.close;
-  if (!Array.isArray(closes) || closes.length === 0) {
-    throw new Error(`No close array in chart result`);
-  }
 
-  let latestClose = null;
   for (let i = closes.length - 1; i >= 0; i--) {
     if (typeof closes[i] === "number") {
-      latestClose = closes[i];
-      break;
+      return closes[i];
     }
   }
-  if (latestClose == null) {
-    throw new Error(`Close array has no numeric value`);
-  }
-
-  // タイムスタンプ（あれば）
-  const timestamps = result.timestamp;
-  let latestTime = null;
-  if (Array.isArray(timestamps) && timestamps.length > 0) {
-    latestTime = new Date(timestamps[timestamps.length - 1] * 1000).toISOString();
-  }
-
-  return { symbol, latestClose, latestTime };
+  throw new Error("先物価格が取得できません");
 }
 
+/* ==========
+   円・銭に分解
+========== */
+function splitYenSen(value) {
+  const rounded = Math.round(value * 100) / 100;
+  const yen = Math.floor(rounded);
+  const sen = Math.round((rounded - yen) * 100);
+  return { yen, sen };
+}
+
+/* ==========
+   メイン処理
+========== */
 async function main() {
-  console.log(`INFO: fetching Yahoo chart... symbol=${SYMBOL}`);
+  console.log("📈 先物取得中...");
+  const future = await fetchFuturePrice();
+  const { yen, sen } = splitYenSen(future);
 
-  const { symbol, latestClose, latestTime } = await fetchYahooChart(SYMBOL);
+  console.log(`取得値: ${future} → ${yen}円 ${sen}銭`);
 
-  console.log(`OK: ${symbol} latestClose=${latestClose} time=${latestTime || "N/A"}`);
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage();
 
-  // ここで「予想値を作る」なら:
-  // 例）先物値をそのまま入力する / 端数を丸める / +α補正する など
-  // 今はまず “取れてる” ことが最重要。
+  /* --- ログイン --- */
+  await page.goto(LOGIN_URL);
+
+  await page.fill('input[name="mail"]', process.env.LOGIN_EMAIL);
+  await page.fill('input[name="pass"]', process.env.LOGIN_PASSWORD);
+  await page.click('input[type="submit"]');
+
+  /* --- TOPへ --- */
+  await page.waitForSelector('a:has-text("TOP")');
+  await page.click('a:has-text("TOP")');
+
+  /* --- 投票画面 --- */
+  await page.waitForSelector('input[name="yen"]');
+
+  await page.fill('input[name="yen"]', String(yen));
+  await page.fill('input[name="sen"]', String(sen));
+
+  await page.click('input[type="submit"]');
+
+  console.log("✅ 投票完了");
+
+  await browser.close();
 }
 
-main().catch((e) => {
-  console.error("ERROR:", e?.message || e);
+main().catch(err => {
+  console.error("❌ ERROR:", err);
   process.exit(1);
 });
