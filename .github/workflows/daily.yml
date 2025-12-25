@@ -1,41 +1,63 @@
-name: Nikkei Auto Forecast
+name: Daily Nikkei Forecast
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 22 * * 1-5" # 平日7:00 JST
+    # JST 07:00 = UTC 22:00（前日）
+    - cron: "0 22 * * *"
 
 jobs:
   run:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+    timeout-minutes: 10
 
-      - uses: actions/setup-node@v4
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      - run: npm install
-      - run: npx playwright install chromium
+      - name: Install deps
+        run: npm ci
 
-      - run: npm start
+      - name: Install Playwright (Chromium)
+        run: npx playwright install --with-deps chromium
+
+      - name: Run bot
         env:
-          LOGIN_EMAIL: ${{ secrets.LOGIN_EMAIL }}
-          LOGIN_PASSWORD: ${{ secrets.LOGIN_PASSWORD }}
+          FORECAST_EMAIL: ${{ secrets.FORECAST_EMAIL }}
+          FORECAST_PASSWORD: ${{ secrets.FORECAST_PASSWORD }}
+        run: npm start
 
-                # 成功したらSlack通知
+      # 失敗したときだけ、debug.png/debug.html をアップロード
+      - name: Upload debug artifacts (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug
+          path: |
+            debug.png
+            debug.html
+
+      # Slack通知（成功）
       - name: Notify Slack (success)
-        if: ${{ success() }}
+        if: success()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
           curl -X POST -H 'Content-type: application/json' \
-          --data "{\"text\":\"✅ 日経平均フォーキャスト 投票成功！\\n先物取得〜投票まで完了しました\\nRun: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}" \
-          "${{ secrets.SLACK_WEBHOOK_URL }}"
+            --data '{"text":"✅ Nikkei forecast bot: SUCCESS"}' \
+            "$SLACK_WEBHOOK_URL"
 
-      # 失敗したらSlack通知
+      # Slack通知（失敗）
       - name: Notify Slack (failure)
-        if: ${{ failure() }}
+        if: failure()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
           curl -X POST -H 'Content-type: application/json' \
-          --data "{\"text\":\"❌ 日経平均フォーキャスト 投票失敗\\nログを確認してください\\nRun: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}" \
-          "${{ secrets.SLACK_WEBHOOK_URL }}"
-
+            --data '{"text":"❌ Nikkei forecast bot: FAILED（ActionsのArtifactsに debug.png / debug.html あります）"}' \
+            "$SLACK_WEBHOOK_URL"
