@@ -1,0 +1,1 @@
+# Automatically-input-Nikkei-forecasts-every-day
