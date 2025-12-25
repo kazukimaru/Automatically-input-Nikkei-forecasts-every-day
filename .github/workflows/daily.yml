@@ -28,8 +28,8 @@ jobs:
 
       - name: Run bot
         env:
-          FORECAST_EMAIL: ${{ secrets.FORECAST_EMAIL }}
-          FORECAST_PASSWORD: ${{ secrets.FORECAST_PASSWORD }}
+          LOGIN_EMAIL: ${{ secrets.LOGIN_EMAIL }}
+          LOGIN_PASSWORD: ${{ secrets.LOGIN_PASSWORD }}
         run: npm start
 
       # 失敗したときだけ、debug.png/debug.html をアップロード
