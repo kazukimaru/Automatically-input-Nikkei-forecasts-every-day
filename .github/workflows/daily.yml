@@ -22,3 +22,20 @@ jobs:
         env:
           LOGIN_EMAIL: ${{ secrets.LOGIN_EMAIL }}
           LOGIN_PASSWORD: ${{ secrets.LOGIN_PASSWORD }}
+
+                # 成功したらSlack通知
+      - name: Notify Slack (success)
+        if: ${{ success() }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+          --data "{\"text\":\"✅ 日経平均フォーキャスト 投票成功！\\n先物取得〜投票まで完了しました\\nRun: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}" \
+          "${{ secrets.SLACK_WEBHOOK_URL }}"
+
+      # 失敗したらSlack通知
+      - name: Notify Slack (failure)
+        if: ${{ failure() }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+          --data "{\"text\":\"❌ 日経平均フォーキャスト 投票失敗\\nログを確認してください\\nRun: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}" \
+          "${{ secrets.SLACK_WEBHOOK_URL }}"
+
