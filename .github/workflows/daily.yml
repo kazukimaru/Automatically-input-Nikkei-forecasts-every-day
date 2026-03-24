@@ -25,7 +25,7 @@ jobs:
       - name: Install deps
         run: npm install
 
-      - name: Install Playwright
+      - name: Install Playwright (Chromium)
         run: npx playwright install --with-deps chromium
 
       - name: Run bot
@@ -37,12 +37,21 @@ jobs:
           TZ: Asia/Tokyo
         run: npm start
 
-      # ===== ここが今回の本質 =====
-      - name: Keep repo alive (auto commit)
+      - name: Keep repo alive (weekly)
+        if: always()
         run: |
+          # 日曜だけ実行（0 = Sunday）
+          if [ "$(date +%w)" != "0" ]; then
+            echo "skip commit (not Sunday)"
+            exit 0
+          fi
+
           date > heartbeat.txt
           git config user.name "github-actions"
           git config user.email "actions@github.com"
+
+          git pull --rebase
+
           git add heartbeat.txt
           git commit -m "keep alive $(date)" || echo "no changes"
           git push
