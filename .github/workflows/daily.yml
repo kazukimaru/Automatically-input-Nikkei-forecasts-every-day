@@ -1,45 +1,45 @@
-name:DailyNikkeiForecast
+name: Daily Nikkei Forecast
 
 on:
-workflow_dispatch:
-schedule:
-# JST 07:00 = UTC 22:00（前日）
--cron:"0 22 * * *"
+  workflow_dispatch:
+  schedule:
+    # JST 07:00 = UTC 22:00（前日）
+    - cron: "0 22 * * *"
 
 jobs:
-run:
-runs-on:ubuntu-latest
-timeout-minutes:10
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
 
-steps:
--name:Checkout
-uses:actions/checkout@v4
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
--name:SetupNode
-uses:actions/setup-node@v4
-with:
-node-version:"20"
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
 
--name:Installdeps
-run:npminstall
+      - name: Install deps
+        run: npm install
 
--name:InstallPlaywright(Chromium)
-run:npxplaywrightinstall--with-depschromium
+      - name: Install Playwright (Chromium)
+        run: npx playwright install --with-deps chromium
 
--name:Runbot
-env:
-LOGIN_EMAIL:${{secrets.LOGIN_EMAIL}}
-LOGIN_PASSWORD:${{secrets.LOGIN_PASSWORD}}
-SLACK_WEBHOOK_URL:${{secrets.SLACK_WEBHOOK_URL}}
-RUN_URL:${{github.server_url}}/${{github.repository}}/actions/runs/${{github.run_id}}
-TZ:Asia/Tokyo
-run:npmstart
+      - name: Run bot
+        env:
+          LOGIN_EMAIL: ${{ secrets.LOGIN_EMAIL }}
+          LOGIN_PASSWORD: ${{ secrets.LOGIN_PASSWORD }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TZ: Asia/Tokyo
+        run: npm start
 
--name:Uploaddebugartifacts(onfailure)
-if:failure()
-uses:actions/upload-artifact@v4
-with:
-name:debug
-path: |
+      - name: Upload debug artifacts (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug
+          path: |
             debug.png
             debug.html
