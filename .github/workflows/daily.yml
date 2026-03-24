@@ -1,56 +1,45 @@
-name: Daily Nikkei Forecast
+name:DailyNikkeiForecast
 
 on:
-  workflow_dispatch:
-  schedule:
-    # JST 07:00 = UTC 22:00 (前日)
-    - cron: "0 22 * * *"
+workflow_dispatch:
+schedule:
+# JST 07:00 = UTC 22:00（前日）
+-cron:"0 22 * * *"
 
 jobs:
-  run:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: write # 60日ルール対策のpushに必須
+run:
+runs-on:ubuntu-latest
+timeout-minutes:10
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+steps:
+-name:Checkout
+uses:actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: 'npm' # 実行速度を上げるキャッシュ設定
+-name:SetupNode
+uses:actions/setup-node@v4
+with:
+node-version:"20"
 
-      - name: Install dependencies
-        run: npm ci
+-name:Installdeps
+run:npminstall
 
-      - name: Install Playwright (Chromium)
-        run: npx playwright install --with-deps chromium
+-name:InstallPlaywright(Chromium)
+run:npxplaywrightinstall--with-depschromium
 
-      - name: Run bot
-        env:
-          LOGIN_EMAIL: ${{ secrets.LOGIN_EMAIL }}
-          LOGIN_PASSWORD: ${{ secrets.LOGIN_PASSWORD }}
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          TZ: Asia/Tokyo
-        run: npm start
+-name:Runbot
+env:
+LOGIN_EMAIL:${{secrets.LOGIN_EMAIL}}
+LOGIN_PASSWORD:${{secrets.LOGIN_PASSWORD}}
+SLACK_WEBHOOK_URL:${{secrets.SLACK_WEBHOOK_URL}}
+RUN_URL:${{github.server_url}}/${{github.repository}}/actions/runs/${{github.run_id}}
+TZ:Asia/Tokyo
+run:npmstart
 
-      # 実行が失敗した時だけSlackに通知を飛ばす
-      - name: Notify Slack on failure
-        if: failure()
-        run: |
-          curl -X POST -H 'Content-type: application/json' \
-          --data "{\"text\":\"🚨 *Nikkei Forecast Failed!*\nRun URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
-          ${{ secrets.SLACK_WEBHOOK_URL }}
-
-      # 60日ルール対策：毎週日曜の夜（JST 月曜朝）に空コミットを打って停止を防ぐ
-      - name: Keep-alive (Weekly)
-        if: github.event_schedule == '0 22 * * 0'
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git commit --allow-empty -m "keep-alive: prevent workflow from being disabled"
-          git push
+-name:Uploaddebugartifacts(onfailure)
+if:failure()
+uses:actions/upload-artifact@v4
+with:
+name:debug
+path: |
+            debug.png
+            debug.html
