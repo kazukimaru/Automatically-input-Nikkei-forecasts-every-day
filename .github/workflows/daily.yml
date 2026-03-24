@@ -1,10 +1,12 @@
-name: Daily Nikkei Forecast
+name: DailyNikkeiForecast
 
 on:
   workflow_dispatch:
   schedule:
-    # JST 07:00 = UTC 22:00（前日）
-    - cron: "0 22 * * *"
+    - cron: "0 22 * * *" # JST 07:00
+
+permissions:
+  contents: write
 
 jobs:
   run:
@@ -23,7 +25,7 @@ jobs:
       - name: Install deps
         run: npm install
 
-      - name: Install Playwright (Chromium)
+      - name: Install Playwright
         run: npx playwright install --with-deps chromium
 
       - name: Run bot
@@ -34,6 +36,16 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TZ: Asia/Tokyo
         run: npm start
+
+      # ===== ここが今回の本質 =====
+      - name: Keep repo alive (auto commit)
+        run: |
+          date > heartbeat.txt
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add heartbeat.txt
+          git commit -m "keep alive $(date)" || echo "no changes"
+          git push
 
       - name: Upload debug artifacts (on failure)
         if: failure()
