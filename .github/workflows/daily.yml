@@ -3,7 +3,7 @@ name: DailyNikkeiForecast
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 22 * * *" # JST 07:00
+    - cron: "0 20 * * *" # JST 05:00
 
 permissions:
   contents: write
